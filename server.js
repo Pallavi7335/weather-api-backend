@@ -5,16 +5,18 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const moment = require('moment'); // 🛑 समय को फ़ॉर्मेट करने के लिए Moment.js लाइब्रेरी का उपयोग करें
 
 const app = express();
-// Line 11:
-const PORT = 8000; // 3000 की जगह 8000 करें
+const PORT = 8000; 
 
 // **********************************************
 // 🛑 यहाँ अपनी असली WeatherAPI.com Key डालें!
 // **********************************************
 const API_KEY = '4fc134f6f12044f3a5355859251710'; // <--- इसे अपनी Key से बदलें
-const API_BASE_URL = 'http://api.weatherapi.com/v1/current.json'; // WeatherAPI URL
+
+// ✅ Weather API URL को forecast.json पर बदलें और 'days=1' जोड़ें
+const API_BASE_URL = 'http://api.weatherapi.com/v1/forecast.json'; 
 
 // दर सीमा (Rate Limiting)
 const limiter = rateLimit({
@@ -29,6 +31,16 @@ app.use(cors());
 app.use(limiter); 
 app.use(express.json());
 
+// 💡 Helper Function: Icon Code को निकालता है (जैसे 113)
+const extractIconCode = (iconUrl) => {
+    try {
+        const match = iconUrl.match(/(\d+)(?=\.png)/);
+        return match ? match[1] : null;
+    } catch (e) {
+        return null;
+    }
+};
+
 // 💡 मुख्य API एंडपॉइंट जिसे आपका Android ऐप कॉल करेगा:
 // उदाहरण: http://10.0.2.2:3000/api/weather?city=Delhi
 app.get('/api/weather', async (req, res) => {
@@ -39,35 +51,58 @@ app.get('/api/weather', async (req, res) => {
     }
 
     try {
-        // 1. WeatherAPI.com API को कॉल करें
+        // 1. WeatherAPI.com API को कॉल करें (forecast.json का उपयोग करके)
         const response = await axios.get(API_BASE_URL, {
             params: {
                 key: API_KEY, // API Key
                 q: city, // शहर का नाम (City name)
+                days: 1, // आज का forecast चाहिए
             }
         });
 
         const data = response.data;
         
-        // 2. डेटा को Android ऐप के लिए साफ़ (Clean) करें
+        // 🛑 2. Hourly Forecast Data को प्रोसेस करें
+        let hourlyData = [];
+        
+        // forecastday[0].hour में 24 घंटे का डेटा होता है
+        if (data.forecast && data.forecast.forecastday.length > 0) {
+            
+            // वर्तमान समय के बाद से डेटा लें
+            const now = moment(); 
+            
+            // केवल अगले 4 घंटों के लिए डेटा मैप करें
+            hourlyData = data.forecast.forecastday[0].hour
+                .filter(h => moment.unix(h.time_epoch).isAfter(now)) // वर्तमान समय से बाद का डेटा
+                .slice(0, 4) // केवल अगले 4 घंटे लें
+                .map(h => ({
+                    // समय को "HH:MM" फॉर्मेट में फ़ॉर्मेट करें
+                    time: moment.unix(h.time_epoch).format('HH:mm'),
+                    temp: Math.round(h.temp_c), 
+                    iconCode: extractIconCode(h.condition.icon),
+                }));
+        }
+
+        // 3. डेटा को Android ऐप के लिए साफ़ (Clean) करें
         const cleanedData = {
             city: data.location.name,
             country: data.location.country,
-            temp: Math.round(data.current.temp_c), // Celsius तापमान
+            temp: Math.round(data.current.temp_c), 
             description: data.current.condition.text, 
-            icon: data.current.condition.icon.match(/(\d+)(?=\.png)/)[1], // केवल Icon कोड संख्या (e.g., 113) निकालें
+            icon: extractIconCode(data.current.condition.icon), 
             humidity: data.current.humidity,
-            windSpeed: data.current.wind_kph, // km/h में
-            pressure: data.current.pressure_mb // mb को hPa में (लगभग बराबर)
+            windSpeed: data.current.wind_kph,
+            pressure: data.current.pressure_mb,
+            
+            // ✅ Hourly Data जोड़ें (यह अब Android App द्वारा पढ़ा जाएगा)
+            hourly: hourlyData 
         };
 
-        // 3. साफ़ किया हुआ डेटा वापस Android ऐप को भेज दें
+        // 4. साफ़ किया हुआ डेटा वापस Android ऐप को भेज दें
         res.json(cleanedData);
 
     } catch (error) {
-        // अगर WeatherAPI से Error आता है
         if (error.response && error.response.status === 400) {
-             // 400 अक्सर तब आता है जब शहर नहीं मिलता या Key गलत होती है
             return res.status(404).json({ error: `City '${city}' not found or API Key is invalid.` });
         }
         console.error('External API Error:', error.message);
@@ -80,3 +115,5 @@ app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Local testing URL for Android: http://10.0.2.2:${PORT}`);
 });
+
+    
