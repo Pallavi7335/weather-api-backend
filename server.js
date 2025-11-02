@@ -5,10 +5,10 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
-const moment = require('moment'); // 🛑 समय को फ़ॉर्मेट करने के लिए Moment.js लाइब्रेरी का उपयोग करें
+const moment = require('moment'); 
 
 const app = express();
-// Render से PORT लें, या 8000 का उपयोग करें (Render Deploy के लिए ज़रूरी फिक्स)
+// Render पर Environment Variable से PORT उठाएँ
 const PORT = process.env.PORT || 8000; 
 
 // **********************************************
@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 8000;
 // **********************************************
 const API_KEY = '4fc134f6f12044f3a5355859251710'; 
 
-// Weather API URL को forecast.json पर बदलें
+// ✅ Weather API URL को forecast.json पर उपयोग करें
 const API_BASE_URL = 'http://api.weatherapi.com/v1/forecast.json'; 
 
 // दर सीमा (Rate Limiting)
@@ -32,7 +32,7 @@ app.use(cors());
 app.use(limiter); 
 app.use(express.json());
 
-// 💡 Helper Function: Icon Code को सुरक्षित रूप से निकालता है (e.g., 113)
+// 💡 Helper Function: Icon Code को निकालता है (जैसे 113)
 const extractIconCode = (iconUrl) => {
     try {
         if (!iconUrl) return null;
@@ -44,46 +44,63 @@ const extractIconCode = (iconUrl) => {
 };
 
 // 💡 मुख्य API एंडपॉइंट जिसे आपका Android ऐप कॉल करेगा:
+// उदाहरण: .../api/weather?city=Delhi OR .../api/weather?city=22.7196,75.8577
 app.get('/api/weather', async (req, res) => {
-    const city = req.query.city;
+    const query = req.query.city; // 'city' में City Name OR lat,lon हो सकता है
 
-    if (!city) {
+    if (!query) {
         return res.status(400).json({ error: 'City query parameter is required.' });
     }
 
     try {
+        // 1. WeatherAPI.com API को कॉल करें 
         const response = await axios.get(API_BASE_URL, {
             params: {
-                key: API_KEY, 
-                q: city, 
+                key: API_KEY,
+                q: query, // यहाँ lat,lon या City Name जाएगा
                 days: 1, 
             }
         });
 
         const data = response.data;
         
+        // 🛑 2. Hourly Forecast Data को प्रोसेस करें
         let hourlyData = [];
         
         if (data.forecast && data.forecast.forecastday.length > 0) {
             
             const now = moment(); 
             
+            // केवल अगले 4 घंटों के लिए डेटा मैप करें
             hourlyData = data.forecast.forecastday[0].hour
-                .filter(h => moment.unix(h.time_epoch).isAfter(now))
+                .filter(h => moment.unix(h.time_epoch).isAfter(now)) 
                 .slice(0, 4) 
                 .map(h => ({
-                    // ⭐️ FIX: 24-घंटे (HH:mm) से 12-घंटे (hh:mm A) फॉर्मेट में बदलें
+                    // समय को "hh:mm A" (AM/PM) फॉर्मेट में फ़ॉर्मेट करें
                     time: moment.unix(h.time_epoch).format('hh:mm A'),
-                    
                     temp: Math.round(h.temp_c), 
                     iconCode: extractIconCode(h.condition.icon),
                 }));
         }
 
-        // 3. डेटा को Android ऐप के लिए साफ़ (Clean) करें
+        // 🛑 3. GPS/City नाम को ठीक से पहचानना
+        let cityName = data.location.name;
+        let countryName = data.location.country;
+
+        // यदि कोऑर्डिनेट्स भेजे गए थे, तो city/country नाम का उपयोग करें
+        if (query.includes(',')) {
+            // WeatherAPI.com location.name में अक्सर "Indore" जैसा नाम देता है, 
+            // इसलिए इसे सीधे उपयोग करना सुरक्षित है।
+            cityName = data.location.name; 
+            countryName = data.location.country;
+        }
+
+
+        // 4. डेटा को Android ऐप के लिए साफ़ (Clean) करें
         const cleanedData = {
-            city: data.location.name,
-            country: data.location.country,
+            // ✅ फिक्स: lat,lon या City Name से आया हुआ नाम उपयोग करें
+            city: cityName, 
+            country: countryName,
             temp: Math.round(data.current.temp_c), 
             description: data.current.condition.text, 
             icon: extractIconCode(data.current.condition.icon), 
@@ -94,11 +111,12 @@ app.get('/api/weather', async (req, res) => {
             hourly: hourlyData 
         };
 
+        // 5. साफ़ किया हुआ डेटा वापस Android ऐप को भेज दें
         res.json(cleanedData);
 
     } catch (error) {
         if (error.response && error.response.status === 400) {
-            return res.status(404).json({ error: `City '${city}' not found or API Key is invalid.` });
+            return res.status(404).json({ error: `City or Coordinates not found, or API Key is invalid.` });
         }
         console.error('External API Error:', error.message);
         res.status(500).json({ error: 'Server could not fetch weather data.' });
@@ -108,5 +126,4 @@ app.get('/api/weather', async (req, res) => {
 // 💡 सर्वर को शुरू करें
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`Local testing URL for Android: http://10.0.2.2:${PORT}`);
 });
