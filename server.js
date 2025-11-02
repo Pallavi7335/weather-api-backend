@@ -8,7 +8,7 @@ const rateLimit = require('express-rate-limit');
 const moment = require('moment'); 
 
 const app = express();
-// Render पर Environment Variable से PORT उठाएँ
+// ✅ Fix 1: Render पर PORT Environment Variable का उपयोग करें
 const PORT = process.env.PORT || 8000; 
 
 // **********************************************
@@ -71,36 +71,23 @@ app.get('/api/weather', async (req, res) => {
             
             const now = moment(); 
             
-            // केवल अगले 4 घंटों के लिए डेटा मैप करें
             hourlyData = data.forecast.forecastday[0].hour
                 .filter(h => moment.unix(h.time_epoch).isAfter(now)) 
                 .slice(0, 4) 
                 .map(h => ({
-                    // समय को "hh:mm A" (AM/PM) फॉर्मेट में फ़ॉर्मेट करें
-                    time: moment.unix(h.time_epoch).format('hh:mm A'),
+                    // ✅ AM/PM फॉर्मेट का उपयोग करें
+                    time: moment.unix(h.time_epoch).format('hh:mm A'), 
                     temp: Math.round(h.temp_c), 
                     iconCode: extractIconCode(h.condition.icon),
                 }));
         }
 
-        // 🛑 3. GPS/City नाम को ठीक से पहचानना
-        let cityName = data.location.name;
-        let countryName = data.location.country;
-
-        // यदि कोऑर्डिनेट्स भेजे गए थे, तो city/country नाम का उपयोग करें
-        if (query.includes(',')) {
-            // WeatherAPI.com location.name में अक्सर "Indore" जैसा नाम देता है, 
-            // इसलिए इसे सीधे उपयोग करना सुरक्षित है।
-            cityName = data.location.name; 
-            countryName = data.location.country;
-        }
-
-
-        // 4. डेटा को Android ऐप के लिए साफ़ (Clean) करें
+        // 3. डेटा को Android ऐप के लिए साफ़ (Clean) करें
         const cleanedData = {
-            // ✅ फिक्स: lat,lon या City Name से आया हुआ नाम उपयोग करें
-            city: cityName, 
-            country: countryName,
+            // ✅ City/Country नाम सीधे API response से लेना सुरक्षित है,
+            // क्योंकि API को पता होता है कि किस Lat/Lon से कौन सा नाम जुड़ा है।
+            city: data.location.name, 
+            country: data.location.country,
             temp: Math.round(data.current.temp_c), 
             description: data.current.condition.text, 
             icon: extractIconCode(data.current.condition.icon), 
@@ -111,12 +98,15 @@ app.get('/api/weather', async (req, res) => {
             hourly: hourlyData 
         };
 
-        // 5. साफ़ किया हुआ डेटा वापस Android ऐप को भेज दें
+        // 4. साफ़ किया हुआ डेटा वापस Android ऐप को भेज दें
         res.json(cleanedData);
 
     } catch (error) {
-        if (error.response && error.response.status === 400) {
-            return res.status(404).json({ error: `City or Coordinates not found, or API Key is invalid.` });
+        // यह सुनिश्चित करें कि एरर मैसेज में क्रैश का कारण पता चले
+        if (error.response) {
+            if (error.response.status === 400) {
+                return res.status(404).json({ error: `City or Coordinates not found, or API Key is invalid.` });
+            }
         }
         console.error('External API Error:', error.message);
         res.status(500).json({ error: 'Server could not fetch weather data.' });
