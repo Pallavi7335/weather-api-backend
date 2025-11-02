@@ -8,7 +8,8 @@ const rateLimit = require('express-rate-limit');
 const moment = require('moment'); // 🛑 समय को फ़ॉर्मेट करने के लिए Moment.js लाइब्रेरी का उपयोग करें
 
 const app = express();
-const PORT = 8000; 
+// ✅ नया कोड: Render से PORT लें, या 8000 का उपयोग करें
+const PORT = process.env.PORT || 8000; 
 
 // **********************************************
 // 🛑 यहाँ अपनी असली WeatherAPI.com Key डालें!
@@ -31,18 +32,20 @@ app.use(cors());
 app.use(limiter); 
 app.use(express.json());
 
-// 💡 Helper Function: Icon Code को निकालता है (जैसे 113)
+// 💡 Helper Function: Icon Code को सुरक्षित रूप से निकालता है (e.g., 113)
 const extractIconCode = (iconUrl) => {
     try {
+        if (!iconUrl) return null;
+        // /(\d+)(?=\.png)/: यह .png से पहले की संख्या को ढूंढता है
         const match = iconUrl.match(/(\d+)(?=\.png)/);
         return match ? match[1] : null;
     } catch (e) {
+        // अगर पार्सिंग में कोई भी एरर आता है, तो null रिटर्न करें, क्रैश न करें
         return null;
     }
 };
 
 // 💡 मुख्य API एंडपॉइंट जिसे आपका Android ऐप कॉल करेगा:
-// उदाहरण: http://10.0.2.2:3000/api/weather?city=Delhi
 app.get('/api/weather', async (req, res) => {
     const city = req.query.city;
 
@@ -54,9 +57,9 @@ app.get('/api/weather', async (req, res) => {
         // 1. WeatherAPI.com API को कॉल करें (forecast.json का उपयोग करके)
         const response = await axios.get(API_BASE_URL, {
             params: {
-                key: API_KEY, // API Key
-                q: city, // शहर का नाम (City name)
-                days: 1, // आज का forecast चाहिए
+                key: API_KEY, 
+                q: city, 
+                days: 1, 
             }
         });
 
@@ -65,16 +68,14 @@ app.get('/api/weather', async (req, res) => {
         // 🛑 2. Hourly Forecast Data को प्रोसेस करें
         let hourlyData = [];
         
-        // forecastday[0].hour में 24 घंटे का डेटा होता है
         if (data.forecast && data.forecast.forecastday.length > 0) {
             
-            // वर्तमान समय के बाद से डेटा लें
             const now = moment(); 
             
-            // केवल अगले 4 घंटों के लिए डेटा मैप करें
+            // वर्तमान समय के बाद से डेटा लें और अगले 4 घंटे मैप करें
             hourlyData = data.forecast.forecastday[0].hour
-                .filter(h => moment.unix(h.time_epoch).isAfter(now)) // वर्तमान समय से बाद का डेटा
-                .slice(0, 4) // केवल अगले 4 घंटे लें
+                .filter(h => moment.unix(h.time_epoch).isAfter(now))
+                .slice(0, 4) 
                 .map(h => ({
                     // समय को "HH:MM" फॉर्मेट में फ़ॉर्मेट करें
                     time: moment.unix(h.time_epoch).format('HH:mm'),
@@ -94,14 +95,14 @@ app.get('/api/weather', async (req, res) => {
             windSpeed: data.current.wind_kph,
             pressure: data.current.pressure_mb,
             
-            // ✅ Hourly Data जोड़ें (यह अब Android App द्वारा पढ़ा जाएगा)
-            hourly: hourlyData 
+            hourly: hourlyData // Hourly Data शामिल करें
         };
 
         // 4. साफ़ किया हुआ डेटा वापस Android ऐप को भेज दें
         res.json(cleanedData);
 
     } catch (error) {
+        // अगर WeatherAPI से Error आता है
         if (error.response && error.response.status === 400) {
             return res.status(404).json({ error: `City '${city}' not found or API Key is invalid.` });
         }
@@ -115,5 +116,3 @@ app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Local testing URL for Android: http://10.0.2.2:${PORT}`);
 });
-
-    
